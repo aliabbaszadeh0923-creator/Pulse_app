@@ -6,8 +6,8 @@
 <title>Pulse — یک موجود زنده دیجیتال</title>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#05060c">
-<link rel="icon" href="icons/icon-192.png">
-<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
   html, body {
@@ -135,8 +135,8 @@ function lerpColor(c1, c2, t){
 // ---- Pointer / hand state ----
 let pointer = { x: null, y: null, active:false };
 let hasInteracted = false;
-let handOpenness = 0.5;   // 0 = fist, 1 = fully open
-let spread = 1;           // smoothed radius multiplier driven by hand
+let handOpenness = 0.5;
+let spread = 1;
 
 function setPointer(x,y){
   pointer.x = x; pointer.y = y; pointer.active = true;
@@ -162,13 +162,11 @@ function onResults(results){
   if(!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) return;
   const lm = results.multiHandLandmarks[0];
 
-  // Palm center ~ landmark 9 (middle finger MCP). Mirror x since selfie view.
   const palm = lm[9];
   const px = (1 - palm.x) * W;
   const py = palm.y * H;
   setPointer(px, py);
 
-  // Hand openness: average fingertip distance from wrist, normalized by palm size
   const wrist = lm[0];
   const palmSize = dist(wrist, lm[9]) || 1;
   const tips = [4,8,12,16,20].map(i => dist(wrist, lm[i]));
@@ -241,7 +239,6 @@ function draw(){
   cx += (targetX - cx) * 0.06;
   cy += (targetY - cy) * 0.06;
 
-  // hand openness drives how far particles spread — fist pulls them in, open hand flings them out
   const spreadTarget = 0.6 + handOpenness * 1.1;
   spread += (spreadTarget - spread) * 0.08;
 
@@ -287,4 +284,4 @@ if ('serviceWorker' in navigator) {
 }
 </script>
 </body>
-</html>
+ </html>
