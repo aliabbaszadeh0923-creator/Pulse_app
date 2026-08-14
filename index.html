@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="fa">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Pulse — یک موجود زنده دیجیتال</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#05060c">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body {
+    width:100%; height:100%; overflow:hidden;
+    background:#05060c;
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    touch-action:none;
+  }
+  canvas { display:block; }
+  video { display:none; }
+
+  #label {
+    position:fixed; top:24px; left:50%; transform:translateX(-50%);
+    color:rgba(255,255,255,0.35);
+    font-size:11px; letter-spacing:0.35em; text-transform:uppercase;
+    font-family: 'Space Mono', monospace;
+    pointer-events:none;
+    transition:opacity 1.2s ease;
+  }
+
+  #hint {
+    position:fixed; bottom:32px; left:50%; transform:translateX(-50%);
+    color:rgba(255,255,255,0.28);
+    font-size:12px; letter-spacing:0.05em;
+    font-family: 'Space Mono', monospace;
+    pointer-events:none;
+    transition:opacity 1.4s ease;
+    text-align:center;
+    width:80%;
+  }
+
+  #timeChip {
+    position:fixed; top:24px; right:20px;
+    color:rgba(255,255,255,0.3);
+    font-size:10px; font-family:'Space Mono', monospace;
+    letter-spacing:0.1em;
+    pointer-events:none;
+  }
+
+  #startOverlay {
+    position:fixed; inset:0; z-index:10;
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:22px;
+    background:#05060c;
+  }
+  #startOverlay h1 {
+    color:#fff; font-size:20px; font-weight:500; letter-spacing:0.02em;
+  }
+  #startOverlay p {
+    color:rgba(255,255,255,0.4); font-size:13px; max-width:280px; text-align:center;
+    font-family:'Space Mono', monospace; line-height:1.7;
+  }
+  #startBtn, #skipBtn {
+    padding:14px 32px; border-radius:999px; border:1px solid rgba(255,255,255,0.2);
+    background:rgba(255,255,255,0.06); color:#fff; font-size:14px;
+    font-family:'Space Grotesk', sans-serif; cursor:pointer;
+  }
+  #startBtn { background:#fff; color:#05060c; border:none; font-weight:600; }
+  #skipBtn { background:transparent; color:rgba(255,255,255,0.4); }
+
+  #camChip {
+    position:fixed; bottom:24px; right:20px;
+    color:rgba(255,255,255,0.3);
+    font-size:10px; font-family:'Space Mono', monospace;
+    letter-spacing:0.08em;
+    pointer-events:none;
+    opacity:0;
+    transition:opacity 0.6s ease;
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="label">PULSE</div>
+<div id="timeChip"></div>
+<div id="hint">لمس کن یا انگشتتو حرکت بده</div>
+<div id="camChip">دست شناسایی شد</div>
+<video id="video" playsinline muted></video>
+
+<div id="startOverlay">
+  <h1>PULSE</h1>
+  <p>با دوربین، دست‌هات موجود رو کنترل می‌کنن. دستتو ببند و باز کن، ببین چی می‌شه.</p>
+  <button id="startBtn">روشن کردن دوربین</button>
+  <button id="skipBtn">بدون دوربین ادامه بده</button>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3.1675466862/camera_utils.js"></script>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+let W, H, DPR;
+function resize(){
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width = W * DPR; canvas.height = H * DPR;
+  canvas.style.width = W+'px'; canvas.style.height = H+'px';
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ---- Time-of-day palette ----
+function getPalette(){
+  const h = new Date().getHours();
+  if (h >= 5 && h < 8)   return { name:'سپیده', a:'#FFB86B', b:'#FF6B9D' };
+  if (h >= 8 && h < 17)  return { name:'روز',   a:'#00F5D4', b:'#4EA8FF' };
+  if (h >= 17 && h < 20) return { name:'غروب',  a:'#FF6B6B', b:'#B44FFF' };
+  return                        { name:'شب',    a:'#7B2FFF', b:'#2ED0C4' };
+}
+const palette = getPalette();
+document.getElementById('timeChip').textContent = palette.name.toUpperCase();
+
+function lerpColor(c1, c2, t){
+  const p1 = parseInt(c1.slice(1),16), p2 = parseInt(c2.slice(1),16);
+  const r1=(p1>>16)&255, g1=(p1>>8)&255, b1=p1&255;
+  const r2=(p2>>16)&255, g2=(p2>>8)&255, b2=p2&255;
+  const r=Math.round(r1+(r2-r1)*t), g=Math.round(g1+(g2-g1)*t), b=Math.round(b1+(b2-b1)*t);
+  return `rgb(${r},${g},${b})`;
+}
+
+// ---- Pointer / hand state ----
+let pointer = { x: null, y: null, active:false };
+let hasInteracted = false;
+let handOpenness = 0.5;   // 0 = fist, 1 = fully open
+let spread = 1;           // smoothed radius multiplier driven by hand
+
+function setPointer(x,y){
+  pointer.x = x; pointer.y = y; pointer.active = true;
+  if(!hasInteracted){
+    hasInteracted = true;
+    document.getElementById('hint').style.opacity = 0;
+    document.getElementById('label').style.opacity = 0.15;
+  }
+}
+window.addEventListener('pointermove', e => { if(!camActive) setPointer(e.clientX, e.clientY); });
+window.addEventListener('pointerdown', e => { if(!camActive) setPointer(e.clientX, e.clientY); });
+window.addEventListener('touchmove', e => { if(!camActive){ const t=e.touches[0]; if(t) setPointer(t.clientX,t.clientY); } }, {passive:true});
+
+// ---- Camera / hand tracking ----
+let camActive = false;
+const video = document.getElementById('video');
+const startOverlay = document.getElementById('startOverlay');
+const camChip = document.getElementById('camChip');
+
+function dist(a,b){ return Math.hypot(a.x-b.x, a.y-b.y); }
+
+function onResults(results){
+  if(!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) return;
+  const lm = results.multiHandLandmarks[0];
+
+  // Palm center ~ landmark 9 (middle finger MCP). Mirror x since selfie view.
+  const palm = lm[9];
+  const px = (1 - palm.x) * W;
+  const py = palm.y * H;
+  setPointer(px, py);
+
+  // Hand openness: average fingertip distance from wrist, normalized by palm size
+  const wrist = lm[0];
+  const palmSize = dist(wrist, lm[9]) || 1;
+  const tips = [4,8,12,16,20].map(i => dist(wrist, lm[i]));
+  const avgTip = tips.reduce((a,b)=>a+b,0) / tips.length;
+  handOpenness = Math.max(0, Math.min(1, (avgTip / palmSize - 1.0) / 1.3));
+
+  camChip.style.opacity = 0.5;
+}
+
+async function startCamera(){
+  try{
+    await navigator.mediaDevices.getUserMedia({ video: { facingMode:'user' }, audio:false });
+  }catch(err){
+    startOverlay.querySelector('p').textContent = 'دسترسی به دوربین رد شد یا در دسترس نیست. با لمس صفحه ادامه بده.';
+    return;
+  }
+
+  const hands = new Hands({ locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/${f}` });
+  hands.setOptions({ maxNumHands:1, modelComplexity:0, minDetectionConfidence:0.6, minTrackingConfidence:0.5 });
+  hands.onResults(onResults);
+
+  const camera = new Camera(video, {
+    onFrame: async () => { await hands.send({ image: video }); },
+    width: 480, height: 360
+  });
+  camera.start();
+  camActive = true;
+  startOverlay.style.display = 'none';
+}
+
+document.getElementById('startBtn').addEventListener('click', startCamera);
+document.getElementById('skipBtn').addEventListener('click', () => {
+  startOverlay.style.display = 'none';
+});
+
+// ---- Particle system: the living entity ----
+const N = reduceMotion ? 60 : 220;
+const particles = [];
+let cx, cy;
+
+function initParticles(){
+  cx = W/2; cy = H/2;
+  particles.length = 0;
+  for(let i=0;i<N;i++){
+    const angle = Math.random()*Math.PI*2;
+    const radius = 40 + Math.random()*140;
+    particles.push({
+      angle, radius,
+      baseRadius: radius,
+      speed: (0.002 + Math.random()*0.004) * (Math.random()<0.5?1:-1),
+      wobble: Math.random()*Math.PI*2,
+      wobbleSpeed: 0.01 + Math.random()*0.02,
+      size: 0.6 + Math.random()*2.2,
+      hueT: Math.random(),
+    });
+  }
+}
+initParticles();
+window.addEventListener('resize', initParticles);
+
+let t = 0;
+function draw(){
+  t += reduceMotion ? 0.004 : 0.012;
+
+  ctx.fillStyle = 'rgba(5,6,12,0.16)';
+  ctx.fillRect(0,0,W,H);
+
+  const targetX = pointer.active ? pointer.x : W/2 + Math.sin(t*0.3)*40;
+  const targetY = pointer.active ? pointer.y : H/2 + Math.cos(t*0.25)*40;
+  cx += (targetX - cx) * 0.06;
+  cy += (targetY - cy) * 0.06;
+
+  // hand openness drives how far particles spread — fist pulls them in, open hand flings them out
+  const spreadTarget = 0.6 + handOpenness * 1.1;
+  spread += (spreadTarget - spread) * 0.08;
+
+  const breathe = (1 + Math.sin(t*0.8)*0.08) * spread;
+
+  ctx.globalCompositeOperation = 'lighter';
+
+  for(const p of particles){
+    p.angle += p.speed * (1 + Math.sin(t+p.wobble)*0.3);
+    p.wobble += p.wobbleSpeed;
+    const r = p.baseRadius * breathe + Math.sin(p.wobble)*10;
+    const x = cx + Math.cos(p.angle) * r;
+    const y = cy + Math.sin(p.angle) * r * 0.85;
+
+    const color = lerpColor(palette.a, palette.b, (p.hueT + Math.sin(t*0.2)*0.3 + 1)%1);
+    const s = p.size * (0.8 + spread*0.3);
+
+    const grad = ctx.createRadialGradient(x,y,0,x,y,s*6);
+    grad.addColorStop(0, color);
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(x,y,s*6,0,Math.PI*2);
+    ctx.fill();
+  }
+
+  const coreGrad = ctx.createRadialGradient(cx,cy,0,cx,cy,60*breathe);
+  coreGrad.addColorStop(0, lerpColor(palette.a, palette.b, (Math.sin(t*0.15)+1)/2));
+  coreGrad.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = coreGrad;
+  ctx.beginPath();
+  ctx.arc(cx,cy,60*breathe,0,Math.PI*2);
+  ctx.fill();
+
+  ctx.globalCompositeOperation = 'source-over';
+
+  requestAnimationFrame(draw);
+}
+draw();
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(()=>{}));
+}
+</script>
+</body>
+</html>
